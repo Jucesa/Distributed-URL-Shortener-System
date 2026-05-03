@@ -7,113 +7,150 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.*;
 
 /**
- * Representa um balanceador de carga Layer 4 (TCP) implementado em Java 21.
- * Utiliza Virtual Threads para gerenciar conexões de forma escalável e
- * integra-se a um Name Registry para descoberta dinâmica de serviços.
+ * Aplicação de Balanceamento de Carga de Camada 4 (TCP) utilizando Java 21.
  *
- * <p>Esta versão inclui um sistema de logging enxuto para rastreamento
- * de requisições passo a passo.</p>
+ * <p>Esta implementação foca em alta escalabilidade através do uso de Virtual Threads,
+ * permitindo o gerenciamento de milhares de conexões simultâneas com I/O bloqueante
+ * de forma eficiente.</p>
  *
- * @version 1.3
+ * <p>As principais estratégias distribuídas implementadas são:</p>
+ * <ul>
+ *     <li><b>Retry Passivo:</b> Caso um nó falhe na conexão inicial, o balanceador tenta
+ *     automaticamente o próximo nó disponível.</li>
+ *     <li><b>Health Check Reativo:</b> Identifica falhas de conexão em tempo real e
+ *     notifica o Name Registry para remover o nó problemático.</li>
+ *     <li><b>Transparência de Localização:</b> O cliente interage apenas com o balanceador,
+ *     desconhecendo a topologia interna dos serviços de backend.</li>
+ * </ul>
+ *
+ * @author Italan Leal
+ * @version 1.4
  */
 public class LoadBalancerApplication {
 
     private static final Logger logger = Logger.getLogger(LoadBalancerApplication.class.getName());
 
-    /** Endereço do Name Registry obtido via variável de ambiente. */
+    /** Endereço do Name Registry para descoberta de serviços. */
     private static final String REGISTRY_ADDR = Config.getString("REGISTRY_HOST", "localhost");
 
-    /** Porta do Name Registry obtida via variável de ambiente. */
+    /** Porta de comunicação com o Name Registry. */
     private static final int REGISTRY_PORT = Config.getInt("REGISTRY_PORT", 9000);
 
-    /** Porta onde o Load Balancer aceitará requisições. */
+    /** Porta local onde o Load Balancer aceita conexões de entrada. */
     private static final int LB_PORT = Config.getInt("LB_PORT", 8080);
 
-    /** Contador atômico para implementação do algoritmo Round Robin. */
+    /** Número máximo de tentativas de reencaminhamento antes de retornar erro ao cliente. */
+    private static final int MAX_RETRIES = 3;
+
+    /** Contador atômico utilizado para a distribuição Round Robin dos serviços. */
     private static final AtomicInteger counter = new AtomicInteger(0);
 
-    /** Gerador de IDs únicos para rastreamento de requisições nos logs. */
+    /** Gerador de identificadores únicos para rastreabilidade de requisições nos logs. */
     private static final AtomicInteger requestIdGenerator = new AtomicInteger(0);
 
     static {
-        // Configura o formato do log para uma linha única e limpa: [Data Hora] [Nível] Mensagem
-        System.setProperty("java.util.logging.SimpleFormatter.format",
-                "[%1$tF %1$tT] [%4$s] %5$s%n");
+        // Configuração do formato de log minimalista para facilitar a leitura no console
+        System.setProperty("java.util.logging.SimpleFormatter.format", "[%1$tF %1$tT] [%4$s] %5$s%n");
     }
 
     /**
-     * Ponto de entrada principal. Inicia o servidor de socket e aguarda conexões.
+     * Inicializa o servidor de socket e entra no loop de aceitação de clientes.
      *
      * @param args Argumentos de linha de comando (não utilizados).
-     * @throws IOException Se houver erro ao abrir o ServerSocket.
+     * @throws IOException Caso ocorra uma falha crítica ao abrir o ServerSocket.
      */
     public static void main(String[] args) throws IOException {
         try (var serverSocket = new ServerSocket(LB_PORT)) {
-            logger.info(String.format("Servidor iniciado na porta %d | Registry: %s:%d",
-                    LB_PORT, REGISTRY_ADDR, REGISTRY_PORT));
+            logger.info(String.format("Load Balancer iniciado na porta %d", LB_PORT));
 
             while (true) {
                 var clientSocket = serverSocket.accept();
-                int requestId = requestIdGenerator.incrementAndGet();
+                int rid = requestIdGenerator.incrementAndGet();
 
-                // Java 21: Cada requisição é processada em uma Virtual Thread isolada
-                Thread.ofVirtual().start(() -> proxyRequest(clientSocket, requestId));
+                // Java 21: Criação de uma Virtual Thread por requisição para máximo throughput
+                Thread.ofVirtual().start(() -> proxyRequest(clientSocket, rid));
             }
         }
     }
 
     /**
-     * Processa uma requisição de cliente, realizando a descoberta do serviço
-     * e estabelecendo o túnel bidirecional com o backend.
+     * Gerencia o ciclo de vida completo de uma requisição de proxy.
+     * <p>Realiza a descoberta do serviço, tenta estabelecer a conexão com o backend
+     * e aplica a lógica de retry caso o nó selecionado falhe.</p>
      *
-     * @param clientSocket O socket da conexão do cliente original.
-     * @param rid          ID único da requisição para rastreabilidade nos logs.
+     * @param clientSocket O socket da conexão proveniente do cliente.
+     * @param rid          O identificador único da requisição para auditoria.
      */
     private static void proxyRequest(Socket clientSocket, int rid) {
-        String remoteAddr = clientSocket.getRemoteSocketAddress().toString();
-        logger.info(String.format("[RID-%d] Conexão aberta: %s", rid, remoteAddr));
+        String clientInfo = clientSocket.getRemoteSocketAddress().toString();
+        logger.info(String.format("[RID-%d] Requisição iniciada para: %s", rid, clientInfo));
+        try{
+            for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                String targetAddr = discoverService("app-service");
 
-        try {
-            // Etapa 1: Service Discovery
-            logger.info(String.format("[RID-%d] Buscando nó para 'app-service'...", rid));
-            String targetAddr = discoverService("app-service");
+                if (targetAddr == null) {
+                    logger.warning(String.format("[RID-%d] Falha: Nenhum nó disponível.", rid));
+                    sendErrorResponse(clientSocket, 503, "Service Unavailable");
+                    return;
+                }
 
-            if (targetAddr == null) {
-                logger.warning(String.format("[RID-%d] Erro: Nenhum serviço disponível no Registry.", rid));
-                sendHttpError(clientSocket, 503, "Service Unavailable");
-                return;
+                try (var backendSocket = new Socket()) {
+                    // Timeout de 2s para garantir que o balanceador não fique preso em nós zumbis
+                    backendSocket.connect(new InetSocketAddress(
+                            targetAddr.split(":")[0],
+                            Integer.parseInt(targetAddr.split(":")[1])
+                    ), 2000);
+
+                    logger.info(String.format("[RID-%d] [Tentativa %d] Roteando para: %s", rid, attempt, targetAddr));
+
+                    executeTunneling(clientSocket, backendSocket);
+                    return; // Fluxo finalizado com sucesso
+
+                } catch (IOException e) {
+                    // Lógica Reativa: Detecta falha e limpa o Registry imediatamente
+                    logger.severe(String.format("[RID-%d] Nó %s inacessível. Removendo do Registry...", rid, targetAddr));
+                    unregisterFailedNode(targetAddr);
+
+                    if (attempt == MAX_RETRIES) {
+                        logger.severe(String.format("[RID-%d] Máximo de tentativas atingido.", rid));
+                        sendErrorResponse(clientSocket, 504, "Gateway Timeout");
+                    }
+                }
             }
-
-            logger.info(String.format("[RID-%d] Roteando fluxo para %s", rid, targetAddr));
-            String[] parts = targetAddr.split(":");
-
-            // Etapa 2: Estabelecimento do Túnel com o Backend
-            try (var backendSocket = new Socket()) {
-                backendSocket.connect(new InetSocketAddress(parts[0], Integer.parseInt(parts[1])), 2000);
-
-                // Tunelamento bidirecional usando Virtual Threads (Pipes)
-                var clientToBackend = Thread.ofVirtual().start(() -> transfer(clientSocket, backendSocket));
-                var backendToClient = Thread.ofVirtual().start(() -> transfer(backendSocket, clientSocket));
-
-                // Aguarda o encerramento da transmissão de ambos os lados
-                clientToBackend.join();
-                backendToClient.join();
-
-                logger.info(String.format("[RID-%d] Fluxo finalizado com sucesso.", rid));
-            }
-        } catch (Exception e) {
-            logger.severe(String.format("[RID-%d] Falha crítica: %s", rid, e.getMessage()));
         } finally {
             closeQuietly(clientSocket);
-            logger.info(String.format("[RID-%d] Conexão encerrada.", rid));
+
         }
     }
 
     /**
-     * Consulta o Name Registry para obter a lista de nós disponíveis para um serviço.
+     * Estabelece o túnel bidirecional de dados entre o cliente e o backend.
+     * <p>Utiliza duas Virtual Threads para garantir que o fluxo de leitura e escrita
+     * ocorra de forma independente (Full Duplex).</p>
      *
-     * @param name Nome do serviço a ser descoberto.
-     * @return O endereço "host:port" selecionado ou null se nenhum estiver disponível.
+     * @param client  Socket do cliente.
+     * @param backend Socket do servidor de backend (relay).
+     */
+    private static void executeTunneling(Socket client, Socket backend) {
+        try {
+            var c2b = Thread.ofVirtual().start(() -> transfer(client, backend));
+            var b2c = Thread.ofVirtual().start(() -> transfer(backend, client));
+
+            c2b.join();
+            b2c.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warning("Tunelamento interrompido.");
+        }
+    }
+
+    /**
+     * Consulta o Name Registry para obter um nó disponível para o serviço solicitado.
+     * <p>A seleção do nó é feita através do algoritmo Round Robin baseado em um
+     * contador atômico.</p>
+     *
+     * @param name Nome do serviço registrado (ex: "app-service").
+     * @return O endereço "host:porta" do nó selecionado ou {@code null} se indisponível.
      */
     private static String discoverService(String name) {
         try (var socket = new Socket(REGISTRY_ADDR, REGISTRY_PORT);
@@ -122,46 +159,64 @@ public class LoadBalancerApplication {
 
             out.println("GET " + name);
             String response = in.readLine();
-
             if (response == null || response.isBlank()) return null;
 
             String[] nodes = response.split(",");
             return nodes[Math.abs(counter.getAndIncrement()) % nodes.length];
-        } catch (Exception e) {
+        } catch (IOException e) {
+            logger.severe("Erro ao consultar Name Registry: " + e.getMessage());
             return null;
         }
     }
 
     /**
-     * Transfere dados de um socket para outro.
-     * Utiliza {@link InputStream#transferTo(OutputStream)} para máxima eficiência.
+     * Notifica o Name Registry para remover um nó que apresentou falha técnica.
      *
-     * @param in  Socket de origem.
-     * @param out Socket de destino.
+     * @param address O endereço "host:porta" do nó a ser removido.
      */
-    private static void transfer(Socket in, Socket out) {
-        try (var input = in.getInputStream(); var output = out.getOutputStream()) {
-            input.transferTo(output);
+    private static void unregisterFailedNode(String address) {
+        try (var socket = new Socket(REGISTRY_ADDR, REGISTRY_PORT);
+             var out = new PrintWriter(socket.getOutputStream(), true)) {
+            out.println("UNREGISTER app-service " + address);
         } catch (IOException e) {
-            // Log de depuração opcional para encerramento de stream
+            logger.warning("Falha ao comunicar remoção ao Registry: " + e.getMessage());
         }
     }
 
     /**
-     * Envia uma resposta de erro formatada em HTTP/1.1 via socket puro.
+     * Realiza a transferência bruta de bytes entre dois streams.
      *
-     * @param s    O socket do cliente.
-     * @param code Código de status HTTP.
-     * @param msg  Mensagem de status.
-     * @throws IOException Se houver erro na escrita.
+     * @param in  Socket de entrada.
+     * @param out Socket de saída.
      */
-    private static void sendHttpError(Socket s, int code, String msg) throws IOException {
-        String resp = String.format("HTTP/1.1 %d %s\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n", code, msg);
-        s.getOutputStream().write(resp.getBytes());
+    private static void transfer(Socket in, Socket out) {
+        try (var input = in.getInputStream(); var output = out.getOutputStream()) {
+            input.transferTo(output);
+        } catch (IOException ignored) {
+            // Conexão encerrada por uma das partes
+        }
     }
 
     /**
-     * Fecha um socket sem lançar exceções.
+     * Envia uma resposta HTTP de erro simplificada para o cliente via socket puro.
+     *
+     * @param s    Socket do cliente.
+     * @param code Código de status HTTP (ex: 503, 504).
+     * @param msg  Mensagem descritiva do erro.
+     */
+    private static void sendErrorResponse(Socket s, int code, String msg) {
+        try {
+            String resp = String.format("HTTP/1.1 %d %s\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n%s",
+                    code, msg, msg);
+            OutputStream os = s.getOutputStream();
+            os.write(resp.getBytes());
+            os.flush(); // Garante que os bytes saíram do buffer da JVM para a rede
+            s.close();  // Avisa ao cliente (Postman) que a conversa acabou
+        } catch (IOException ignored) {}
+    }
+
+    /**
+     * Fecha o socket de forma silenciosa, ignorando possíveis exceções de I/O.
      *
      * @param s Socket a ser fechado.
      */

@@ -87,18 +87,32 @@ public class NameRegistryApplication {
     }
 
     /**
-     * Adiciona um novo endereço de nó à lista de um serviço.
-     *
-     * @param parts Partes da mensagem (REGISTER nome-servico endereco).
-     * @param tid   ID da transação.
+     *Adiciona um novo endereço de nó à lista de um serviço de forma idempotente.
+     *<p>
+     *Utiliza {@code addIfAbsent} para garantir que heartbeats repetidos não
+     *gerem entradas duplicadas na lista de roteamento.
+     * </p>
+     *@param parts Partes da mensagem (REGISTER nome-servico endereco).
+     *@param tid   ID da transação para rastreabilidade.
      */
     private static void handleRegister(String[] parts, int tid) {
         if (parts.length < 3) return;
         String serviceName = parts[1];
         String address = parts[2];
 
-        services.computeIfAbsent(serviceName, k -> new CopyOnWriteArrayList<>()).add(address);
-        logger.info(String.format("[TID-%d] Registro: %s -> %s", tid, serviceName, address));
+        // Obtém a lista existente ou cria uma nova se não houver
+        CopyOnWriteArrayList<String> nodes = (CopyOnWriteArrayList<String>) services.computeIfAbsent(
+                serviceName,
+                k -> new CopyOnWriteArrayList<>()
+        );
+
+        // Adiciona apenas se o endereço ainda não estiver na lista
+        if (nodes.addIfAbsent(address)) {
+            logger.info(String.format("[TID-%d] Novo registro: %s -> %s", tid, serviceName, address));
+        } else {
+            // Log opcional para acompanhar o heartbeat sem poluir o console
+            logger.fine(String.format("[TID-%d] Heartbeat recebido (nó já ativo): %s", tid, address));
+        }
     }
 
     /**
