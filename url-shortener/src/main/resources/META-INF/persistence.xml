@@ -3,23 +3,20 @@
              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
              xsi:schemaLocation="https://jakarta.ee/xml/ns/persistence https://jakarta.ee/xml/ns/persistence/persistence_3_0.xsd">
 
-    <!-- O nome "url-shortener-pu" deve bater com o passado no Persistence.createEntityManagerFactory -->
     <persistence-unit name="url-shortener-pu" transaction-type="RESOURCE_LOCAL">
-        <!-- Implementador do JPA (Hibernate) -->
         <provider>org.hibernate.jpa.HibernatePersistenceProvider</provider>
 
-        <!-- Classe mapeada -->
         <class>br.upe.urlshortener.model.Url</class>
 
         <properties>
             <property name="jakarta.persistence.jdbc.driver" value="org.postgresql.Driver" />
-            <property name="jakarta.persistence.jdbc.url" value="jdbc:postgresql://localhost:5432/urlshortener_db" />
-            <property name="jakarta.persistence.jdbc.user" value="postgres" />
-            <property name="jakarta.persistence.jdbc.password" value="password" />
 
-            <!-- Mostra o SQL gerado no terminal para debug -->
+            <property name="jakarta.persistence.jdbc.url" value="jdbc:postgresql://ep-orange-rice-acwrb5do-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require&amp;channel_binding=require" />
+
+            <property name="jakarta.persistence.jdbc.user" value="neondb_owner" />
+            <property name="jakarta.persistence.jdbc.password" value="npg_T5yDgcwp9oMb" />
+
             <property name="hibernate.show_sql" value="true" />
-            <!-- Valida se o banco tem a estrutura correta ao subir -->
             <property name="hibernate.hbm2ddl.auto" value="validate" />
         </properties>
     </persistence-unit>

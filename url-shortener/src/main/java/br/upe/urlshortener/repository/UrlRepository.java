@@ -41,14 +41,9 @@ public class UrlRepository {
      * e injeta essas propriedades na criação do EntityManagerFactory.
      */
     static {
-        Map<String, String> properties = new HashMap<>();
-        properties.put("jakarta.persistence.jdbc.url", Config.getString("DB_URL", "jdbc:postgresql://localhost:5432/urlshortener_db"));
-        properties.put("jakarta.persistence.jdbc.user", Config.getString("DB_USER", "postgres"));
-        properties.put("jakarta.persistence.jdbc.password", Config.getString("DB_PASS", "password"));
-
-        emf = Persistence.createEntityManagerFactory("url-shortener-pu", properties);
+        // Creates the factory using ONLY the settings from persistence.xml
+        emf = Persistence.createEntityManagerFactory("url-shortener-pu");
     }
-
     /**
      * Consulta a sequência atômica do PostgreSQL para obter um identificador único.
      * <p>
