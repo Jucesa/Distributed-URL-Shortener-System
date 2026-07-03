@@ -103,4 +103,27 @@ public class UrlRepository {
             return Optional.ofNullable(url);
         }
     }
+
+    public boolean deleteByShortcode(String shortcode) {
+        EntityManager em = emf.createEntityManager();
+        try {
+            em.getTransaction().begin();
+            Url url = em.find(Url.class, shortcode);
+            if (url == null) {
+                em.getTransaction().rollback();
+                return false;
+            }
+            em.remove(url);
+            em.getTransaction().commit();
+            return true;
+        } catch (Exception e) {
+            if (em.getTransaction().isActive()) {
+                em.getTransaction().rollback();
+            }
+            logger.severe("Erro ao deletar URL no JPA: " + e.getMessage());
+            throw e;
+        } finally {
+            em.close();
+        }
+    }
 }

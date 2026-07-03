@@ -21,6 +21,7 @@ public class URLShortenerApplication {
 
     private static final UrlService urlService = new UrlService();
     private static final String DOMAIN = Config.getString("BASE_DOMAIN", "http://localhost:8080/");
+    private static final br.upe.urlshortener.repository.UserRepository userRepository = new br.upe.urlshortener.repository.UserRepository();
 
     static {
         System.setProperty("java.util.logging.SimpleFormatter.format", "[%1$tF %1$tT] [%4$s] %5$s%n");
@@ -49,6 +50,41 @@ public class URLShortenerApplication {
                 res.status(201).json(jsonResponse);
                 logger.info("URL Encurtada salva no DB: " + originalUrl + " -> " + code);
 
+            } catch (Exception e) {
+                logger.severe("Erro interno do servidor: " + e.getMessage());
+                res.status(500).json("{\"error\":\"Database Error\"}");
+            }
+        });
+
+        // ---------------------------------------------------------
+        // ROTA DELETE: Remove link protegido por API_KEY
+        // ---------------------------------------------------------
+        app.delete("*", (req, res) -> {
+            if (!requireApiKey(req, res)) {
+                return;
+            }
+
+            String prefix = "/api/v1/shorten/";
+            String path = req.getPath();
+            if (!path.startsWith(prefix)) {
+                res.status(404).json("{\"error\":\"Route not found\"}");
+                return;
+            }
+
+            String shortcode = path.substring(prefix.length());
+            if (shortcode.isBlank()) {
+                res.status(400).json("{\"error\":\"Missing shortcode\"}");
+                return;
+            }
+
+            try {
+                boolean deleted = urlService.deleteUrl(shortcode);
+                if (!deleted) {
+                    res.status(404).json("{\"error\":\"Code not found\"}");
+                    return;
+                }
+                res.status(200).json("{\"message\":\"Link deleted\"}");
+                logger.info("URL excluída: " + shortcode);
             } catch (Exception e) {
                 logger.severe("Erro interno do servidor: " + e.getMessage());
                 res.status(500).json("{\"error\":\"Database Error\"}");
@@ -133,6 +169,30 @@ public class URLShortenerApplication {
     /**
      * Utilitário simples para extrair campos do JSON (Substitui o HttpProtocol.unmarshalJsonField)
      */
+    private static boolean requireApiKey(br.upe.common.http.HttpRequest req, br.upe.common.http.HttpResponse res) throws Exception {
+        String authorization = req.getHeader("authorization");
+        if (authorization == null || authorization.isBlank()) {
+            res.status(401).json("{\"error\":\"Unauthorized\"}");
+            return false;
+        }
+
+        String apiKey = extractApiKeyFromAuthorization(authorization);
+        if (apiKey == null || apiKey.isBlank() || !userRepository.isValidApiKey(apiKey)) {
+            res.status(401).json("{\"error\":\"Unauthorized\"}");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static String extractApiKeyFromAuthorization(String authorizationHeader) {
+        String header = authorizationHeader.trim();
+        if (header.toLowerCase().startsWith("bearer ")) {
+            return header.substring(7).trim();
+        }
+        return header;
+    }
+
     private static String extractJsonField(String json, String field) {
         if (json == null) return null;
         String pattern = "\"" + field + "\":";
