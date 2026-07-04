@@ -10,12 +10,6 @@ import java.time.Duration;
 import java.util.Optional;
 import java.util.logging.Logger;
 
-/**
- * Classe principal responsável por inicializar a API de Encurtamento de URL.
- * Agora utiliza o motor HTTP "ExpressApp" para roteamento elegante.
- *
- * @version 5.0 (Express-like Router Integration)
- */
 public class URLShortenerApplication {
     private static final Logger logger = Logger.getLogger(URLShortenerApplication.class.getName());
 
@@ -46,10 +40,8 @@ public class URLShortenerApplication {
             try {
                 String code = urlService.shortenUrl(originalUrl);
                 String jsonResponse = String.format("{\"newUrl\":\"%s%s\"}", DOMAIN, code);
-
                 res.status(201).json(jsonResponse);
                 logger.info("URL Encurtada salva no DB: " + originalUrl + " -> " + code);
-
             } catch (Exception e) {
                 logger.severe("Erro interno do servidor: " + e.getMessage());
                 res.status(500).json("{\"error\":\"Database Error\"}");
@@ -57,6 +49,7 @@ public class URLShortenerApplication {
         });
 
         // ---------------------------------------------------------
+        // ROTA GET: Catch-all — métricas (/stats/CODE) e redirect
         // ROTA DELETE: Remove link protegido por API_KEY
         // ---------------------------------------------------------
         app.delete("*", (req, res) -> {
@@ -94,11 +87,42 @@ public class URLShortenerApplication {
         // ---------------------------------------------------------
         // ROTA GET: Redirecionamento Dinâmico (Catch-All)
         // ---------------------------------------------------------
-        // Em um roteador completo teríamos app.get("/:code"), mas aqui
-        // podemos interceptar qualquer rota GET que não foi mapeada.
         app.get("*", (req, res) -> {
-            // Remove a barra inicial para pegar apenas o código (Ex: "/4k9Z" -> "4k9Z")
-            String code = req.getPath().substring(1);
+            String path = req.getPath();
+
+            // Se o path começa com /stats/, trata como métricas
+            if (path.startsWith("/stats/")) {
+                String code = path.substring("/stats/".length());
+
+                if (code.isEmpty()) {
+                    res.status(400).json("{\"error\":\"Missing shortcode\"}");
+                    return;
+                }
+
+                try {
+                    Optional<String> urlOpt = urlService.getOriginalUrl(code);
+
+                    if (urlOpt.isEmpty()) {
+                        res.status(404).json("{\"error\":\"Code not found\"}");
+                        return;
+                    }
+
+                    long count = urlService.getAccessCount(code);
+                    String json = String.format(
+                        "{\"shortcode\":\"%s\",\"original_url\":\"%s\",\"access_count\":%d}",
+                        code, urlOpt.get(), count
+                    );
+                    res.status(200).json(json);
+
+                } catch (Exception e) {
+                    logger.severe("Erro ao buscar métricas: " + e.getMessage());
+                    res.status(500).json("{\"error\":\"Database Error\"}");
+                }
+                return;
+            }
+
+            // Caso contrário, trata como redirecionamento
+            String code = path.substring(1);
 
             try {
                 Optional<String> urlOpt = urlService.getOriginalUrl(code);
@@ -110,6 +134,7 @@ public class URLShortenerApplication {
 
                 String originalUrl = urlOpt.get();
                 logger.info("Redirecionando " + code + " para " + originalUrl);
+                urlService.registerAccessAsync(code);
                 res.redirect(originalUrl);
 
             } catch (Exception e) {
@@ -122,18 +147,11 @@ public class URLShortenerApplication {
         // START: Iniciando Servidor HTTP e Heartbeat
         // ---------------------------------------------------------
         app.listen(requestedPort, (actualPort) -> {
-
             logger.info("Shortener Service rodando com ExpressApp na porta: " + actualPort);
-
-            // O Heartbeat agora registra a porta efêmera correta gerada pelo SO
             startHeartbeatTask(actualPort);
-
         });
     }
 
-    /**
-     * Mantém o serviço registrado no Name Registry continuamente.
-     */
     private static void startHeartbeatTask(int port) {
         Thread.ofVirtual().start(() -> {
             while (true) {
@@ -151,9 +169,6 @@ public class URLShortenerApplication {
         });
     }
 
-    /**
-     * Dispara o comando de registro para o serviço central de descoberta.
-     */
     private static void registerInNameRegistry(int port) {
         try (var socket = new Socket(Config.getString("REGISTRY_HOST", "localhost"),
                 Config.getInt("REGISTRY_PORT", 9000));
