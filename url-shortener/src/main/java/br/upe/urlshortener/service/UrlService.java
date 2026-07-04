@@ -34,5 +34,7 @@ public class UrlService {
     // NOVO
     public long getAccessCount(String shortcode) {
         return repository.getAccessCount(shortcode);
+    public boolean deleteUrl(String shortcode) {
+        return repository.deleteByShortcode(shortcode);
     }
 }
