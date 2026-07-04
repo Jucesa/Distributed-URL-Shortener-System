@@ -48,20 +48,24 @@ public class UrlRepository {
         }
     }
 
-    // NOVO
     public void incrementAccessCount(String shortcode) {
         EntityManager em = emf.createEntityManager();
         try {
             em.getTransaction().begin();
             em.createNativeQuery(
-                "UPDATE url SET access_count = access_count + 1 WHERE shortcode = ?1"
-            )
-            .setParameter(1, shortcode)
-            .executeUpdate();
+                            "UPDATE url SET access_count = access_count + 1 WHERE shortcode = ?1"
+                    )
+                    .setParameter(1, shortcode)
+                    .executeUpdate();
             em.getTransaction().commit();
         } catch (Exception e) {
             if (em.getTransaction().isActive()) em.getTransaction().rollback();
             logger.severe("Erro ao incrementar access_count: " + e.getMessage());
+        } finally {
+            em.close(); // FIXED: Missing closing blocks added here
+        }
+    }
+
     public boolean deleteByShortcode(String shortcode) {
         EntityManager em = emf.createEntityManager();
         try {
@@ -85,16 +89,16 @@ public class UrlRepository {
         }
     }
 
-    // NOVO
     public long getAccessCount(String shortcode) {
         try (EntityManager em = emf.createEntityManager()) {
             Number result = (Number) em.createNativeQuery(
-                "SELECT access_count FROM url WHERE shortcode = ?1"
-            )
-            .setParameter(1, shortcode)
-            .getSingleResult();
+                            "SELECT access_count FROM url WHERE shortcode = ?1"
+                    )
+                    .setParameter(1, shortcode)
+                    .getSingleResult();
             return result != null ? result.longValue() : 0;
+        } catch (Exception e) {
+            return 0;
         }
     }
-}
 }

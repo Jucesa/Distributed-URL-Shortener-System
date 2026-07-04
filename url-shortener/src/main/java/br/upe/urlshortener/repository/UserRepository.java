@@ -2,6 +2,7 @@ package br.upe.urlshortener.repository;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
+import jakarta.persistence.NoResultException;
 import jakarta.persistence.Persistence;
 
 import java.util.logging.Logger;
@@ -15,16 +16,52 @@ public class UserRepository {
         emf = Persistence.createEntityManagerFactory("url-shortener-pu");
     }
 
-    public boolean isValidApiKey(String apiKey) {
+
+    /**
+     * NEW: Fetches the User ID (assuming column 'id') using the API Key.
+     */
+    public Integer getUserIdByApiKey(String apiKey) {
         try (EntityManager em = emf.createEntityManager()) {
-            Number count = (Number) em.createNativeQuery(
-                    "SELECT COUNT(1) FROM usuarios WHERE api_key = :apiKey")
+            Number result = (Number) em.createNativeQuery(
+                            "SELECT id FROM usuarios WHERE api_key = :apiKey")
                     .setParameter("apiKey", apiKey)
                     .getSingleResult();
-            return count != null && count.intValue() > 0;
+
+            return result != null ? result.intValue() : null; // FIXED HERE
+        } catch (NoResultException e) {
+            return null;
         } catch (Exception e) {
-            logger.warning("Falha ao validar API key: " + e.getMessage());
-            return false;
+            logger.warning("Falha ao buscar usuário pela API key: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * NEW: Saves a new user to the database.
+     */
+    public void saveUser(String username, String apiKey) {
+        EntityManager em = emf.createEntityManager();
+        try {
+            em.getTransaction().begin();
+
+            // Using Native Query to match your 'usuarios' table structure.
+            // If you have a mapped 'Usuario' entity, you could simply do: em.persist(new Usuario(username, apiKey));
+            em.createNativeQuery(
+                            "INSERT INTO usuarios (username, api_key) VALUES (?1, ?2)"
+                    )
+                    .setParameter(1, username)
+                    .setParameter(2, apiKey)
+                    .executeUpdate();
+
+            em.getTransaction().commit();
+        } catch (Exception e) {
+            if (em.getTransaction().isActive()) {
+                em.getTransaction().rollback();
+            }
+            logger.severe("Erro ao salvar usuário no banco: " + e.getMessage());
+            throw new RuntimeException("Database error during user registration", e);
+        } finally {
+            em.close();
         }
     }
 }
