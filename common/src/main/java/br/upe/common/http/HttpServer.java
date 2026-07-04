@@ -23,6 +23,10 @@ public class HttpServer {
         routes.put("POST " + path, handler);
     }
 
+    public void delete(String path, RouteHandler handler) {
+        routes.put("DELETE " + path, handler);
+    }
+
     public void listen(int port, IntConsumer onStart) throws IOException {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
 

@@ -54,4 +54,8 @@ public class UrlService {
     public Optional<String> getOriginalUrl(String shortcode) {
         return repository.findByShortcode(shortcode).map(Url::getLongUrl);
     }
+
+    public boolean deleteUrl(String shortcode) {
+        return repository.deleteByShortcode(shortcode);
+    }
 }
