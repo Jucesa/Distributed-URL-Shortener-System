@@ -120,13 +120,26 @@ public class HttpServer {
         String registryHost = Config.getString("REGISTRY_HOST", "localhost");
         int registryPort = Config.getInt("REGISTRY_PORT", 9000);
 
+        // Resolve the actual machine IP instead of hardcoding localhost
+        String hostIp = getHostIp();
+
         try (var socket = new Socket(registryHost, registryPort);
              var out = new PrintWriter(socket.getOutputStream(), true)) {
 
-            out.println("REGISTER " + serviceName + " localhost:" + port);
-            logger.fine("Registro renovado no Name Registry (Porta " + port + ")");
+            out.println("REGISTER " + serviceName + " " + hostIp + ":" + port);
+            logger.fine("Registro renovado no Name Registry (" + hostIp + ":" + port + ")");
         } catch (Exception e) {
             logger.warning("Não foi possível registrar no Name Registry. Ele está online?");
+        }
+    }
+
+    private String getHostIp() {
+        String configuredIp = Config.getString("HOST_IP", null);
+        if (configuredIp != null) return configuredIp;
+        try {
+            return java.net.InetAddress.getLocalHost().getHostAddress();
+        } catch (java.net.UnknownHostException e) {
+            return "127.0.0.1";
         }
     }
 }

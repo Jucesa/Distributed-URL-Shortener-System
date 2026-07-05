@@ -11,10 +11,10 @@
         <properties>
             <property name="jakarta.persistence.jdbc.driver" value="org.postgresql.Driver" />
 
-            <property name="jakarta.persistence.jdbc.url" value="jdbc:postgresql://ep-orange-rice-acwrb5do-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require&amp;channel_binding=require" />
+            <property name="jakarta.persistence.jdbc.url" value="jdbc:postgresql://192.168.0.109:5432/url_shortener" />
 
-            <property name="jakarta.persistence.jdbc.user" value="neondb_owner" />
-            <property name="jakarta.persistence.jdbc.password" value="npg_T5yDgcwp9oMb" />
+            <property name="jakarta.persistence.jdbc.user" value="postgres" />
+            <property name="jakarta.persistence.jdbc.password" value="admin" />
 
             <property name="hibernate.show_sql" value="true" />
             <property name="hibernate.hbm2ddl.auto" value="validate" />
