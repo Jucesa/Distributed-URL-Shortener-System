@@ -1,8 +1,12 @@
 package br.upe.common.http;
 
+import br.upe.common.Config;
+
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.IntConsumer;
@@ -13,6 +17,20 @@ public class HttpServer {
 
     // Armazena as rotas no formato "MÉTODO /caminho" -> Handler
     private final Map<String, RouteHandler> routes = new HashMap<>();
+
+    // Infrastructure state
+    private final String serviceName;
+    private final String baseDomain;
+
+    public HttpServer(String serviceName) {
+        this.serviceName = serviceName;
+        // The server resolves its own port and domain configuration
+        this.baseDomain = Config.getString("BASE_DOMAIN", "http://localhost:8080/");
+    }
+
+    public String getBaseDomain() {
+        return this.baseDomain;
+    }
 
     // Métodos estilo Express para registrar rotas
     public void get(String path, RouteHandler handler) {
@@ -27,16 +45,13 @@ public class HttpServer {
         routes.put("DELETE " + path, handler);
     }
 
-    public void listen(int port, IntConsumer onStart) throws IOException {
-        try (ServerSocket serverSocket = new ServerSocket(port)) {
-
-            // Pega a porta real. Se 'port' for 0, o SO define uma porta efêmera.
+    public void start() throws IOException {
+        try (ServerSocket serverSocket = new ServerSocket(0)) {
             int actualPort = serverSocket.getLocalPort();
+            logger.info(serviceName + " rodando isolado da rede na porta: " + actualPort);
 
-            if (onStart != null) {
-                // Passa a porta real de volta para a sua aplicação
-                onStart.accept(actualPort);
-            }
+            // Inicia o heartbeat na rede distribuída automaticamente
+            startHeartbeatTask(actualPort);
 
             while (true) {
                 Socket client = serverSocket.accept();
@@ -77,6 +92,41 @@ public class HttpServer {
 
         } catch (IOException e) {
             logger.warning("Erro de I/O no socket: " + e.getMessage());
+        }
+    }
+
+    // =========================================================
+    // HEARTBEAT / DISCOVERY (HIDDEN FROM APPLICATION)
+    // =========================================================
+
+    private void startHeartbeatTask(int port) {
+        Thread.ofVirtual().start(() -> {
+            while (true) {
+                try {
+                    registerInNameRegistry(port);
+                    Thread.sleep(Duration.ofSeconds(30));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception e) {
+                    logger.warning("Falha ao renovar registro. Tentando novamente em breve...");
+                    try { Thread.sleep(Duration.ofSeconds(5)); } catch (InterruptedException ignored) {}
+                }
+            }
+        });
+    }
+
+    private void registerInNameRegistry(int port) {
+        String registryHost = Config.getString("REGISTRY_HOST", "localhost");
+        int registryPort = Config.getInt("REGISTRY_PORT", 9000);
+
+        try (var socket = new Socket(registryHost, registryPort);
+             var out = new PrintWriter(socket.getOutputStream(), true)) {
+
+            out.println("REGISTER " + serviceName + " localhost:" + port);
+            logger.fine("Registro renovado no Name Registry (Porta " + port + ")");
+        } catch (Exception e) {
+            logger.warning("Não foi possível registrar no Name Registry. Ele está online?");
         }
     }
 }
