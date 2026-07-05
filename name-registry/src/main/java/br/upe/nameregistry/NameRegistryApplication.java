@@ -16,7 +16,7 @@ import java.util.logging.*;
  * <p>Utiliza Virtual Threads para alta escalabilidade e logs estruturados
  * para monitoramento de registros e consultas.</p>
  *
- * @version 1.1
+ * @version 1.3
  */
 public class NameRegistryApplication {
 
@@ -44,8 +44,15 @@ public class NameRegistryApplication {
      * @throws IOException Se houver erro ao abrir o ServerSocket na porta configurada.
      */
     public static void main(String[] args) throws IOException {
+        String ipAddress = "Unknown";
+        try {
+            ipAddress = InetAddress.getLocalHost().getHostAddress();
+        } catch (UnknownHostException e) {
+            logger.warning("Não foi possível determinar o endereço IP da rede local.");
+        }
+
         try (var serverSocket = new ServerSocket(PORT)) {
-            logger.info(String.format("Name Registry iniciado na porta %d", PORT));
+            logger.info(String.format("Name Registry iniciado no IP %s e porta %d", ipAddress, PORT));
 
             while (true) {
                 var clientSocket = serverSocket.accept();
@@ -75,7 +82,7 @@ public class NameRegistryApplication {
             String command = parts[0].toUpperCase();
 
             switch (command) {
-                case "REGISTER" -> handleRegister(parts, tid);
+                case "REGISTER" -> handleRegister(parts, socket, tid); // Passando o socket aqui
                 case "UNREGISTER" -> handleUnregister(parts, tid);
                 case "GET" -> handleDiscovery(parts, socket, tid);
                 default -> logger.warning(String.format("[TID-%d] Comando desconhecido: %s", tid, command));
@@ -87,18 +94,25 @@ public class NameRegistryApplication {
     }
 
     /**
-     *Adiciona um novo endereço de nó à lista de um serviço de forma idempotente.
-     *<p>
-     *Utiliza {@code addIfAbsent} para garantir que heartbeats repetidos não
-     *gerem entradas duplicadas na lista de roteamento.
-     * </p>
-     *@param parts Partes da mensagem (REGISTER nome-servico endereco).
-     *@param tid   ID da transação para rastreabilidade.
+     * Adiciona um novo endereço de nó à lista de um serviço de forma idempotente.
+     * Captura o IP diretamente da conexão do socket.
+     *
+     * @param parts  Partes da mensagem (REGISTER nome-servico porta).
+     * @param socket Socket para extração do IP real do cliente.
+     * @param tid    ID da transação para rastreabilidade.
      */
-    private static void handleRegister(String[] parts, int tid) {
+    private static void handleRegister(String[] parts, Socket socket, int tid) {
+        // Agora esperamos: REGISTER <nome-servico> <porta>
         if (parts.length < 3) return;
+
         String serviceName = parts[1];
-        String address = parts[2];
+        String servicePort = parts[2];
+
+        // Extrai o IP real diretamente da conexão TCP
+        String clientIp = socket.getInetAddress().getHostAddress();
+
+        // Monta o endereço final que será salvo no Registry
+        String address = clientIp + ":" + servicePort;
 
         // Obtém a lista existente ou cria uma nova se não houver
         CopyOnWriteArrayList<String> nodes = (CopyOnWriteArrayList<String>) services.computeIfAbsent(
@@ -110,7 +124,6 @@ public class NameRegistryApplication {
         if (nodes.addIfAbsent(address)) {
             logger.info(String.format("[TID-%d] Novo registro: %s -> %s", tid, serviceName, address));
         } else {
-            // Log opcional para acompanhar o heartbeat sem poluir o console
             logger.fine(String.format("[TID-%d] Heartbeat recebido (nó já ativo): %s", tid, address));
         }
     }
@@ -124,7 +137,7 @@ public class NameRegistryApplication {
     private static void handleUnregister(String[] parts, int tid) {
         if (parts.length < 3) return;
         String serviceName = parts[1];
-        String address = parts[2];
+        String address = parts[2]; // No UNREGISTER, o cliente ainda precisa enviar o "IP:Porta" completo para remoção
 
         List<String> nodes = services.get(serviceName);
         if (nodes != null) {
