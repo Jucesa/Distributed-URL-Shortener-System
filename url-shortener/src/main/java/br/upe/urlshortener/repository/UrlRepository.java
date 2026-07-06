@@ -1,10 +1,13 @@
 package br.upe.urlshortener.repository;
 
+import br.upe.common.Config;
 import br.upe.urlshortener.model.Url;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.Persistence;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Logger;
 
@@ -14,7 +17,14 @@ public class UrlRepository {
     private static final EntityManagerFactory emf;
 
     static {
-        emf = Persistence.createEntityManagerFactory("url-shortener-pu");
+        // Mapeia as variáveis de ambiente para as propriedades do JPA
+        Map<String, String> properties = new HashMap<>();
+        properties.put("jakarta.persistence.jdbc.url", Config.getString("DB_URL","localhost:5432/url-shortener"));
+        properties.put("jakarta.persistence.jdbc.user", Config.getString("DB_USER","postgres"));
+        properties.put("jakarta.persistence.jdbc.password", Config.getString("DB_PASSWORD", "admin"));
+
+        // Inicializa o EntityManagerFactory passando as propriedades dinâmicas
+        emf = Persistence.createEntityManagerFactory("url-shortener-pu", properties);
     }
 
     public long getNextId() {

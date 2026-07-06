@@ -11,11 +11,6 @@
         <properties>
             <property name="jakarta.persistence.jdbc.driver" value="org.postgresql.Driver" />
 
-            <property name="jakarta.persistence.jdbc.url" value="jdbc:postgresql://192.168.0.109:5432/url_shortener" />
-
-            <property name="jakarta.persistence.jdbc.user" value="postgres" />
-            <property name="jakarta.persistence.jdbc.password" value="admin" />
-
             <property name="hibernate.show_sql" value="true" />
             <property name="hibernate.hbm2ddl.auto" value="validate" />
         </properties>
